@@ -1,0 +1,13 @@
+.env
+.idea
+.vscode
+.DS_Store
+/vendor
+./deploy
+sample.http
+docker-compose.yml
+.dockerignore
+.gitignore
+.git
+README.md
+LICENSE

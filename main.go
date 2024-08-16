@@ -4,13 +4,12 @@ import (
 	"context"
 	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
 	"log"
 	"math/rand"
 	"net/http"
-	"os"
-	"strings"
+	"sample/client"
+	"sample/config"
+	"sample/utils"
 	"time"
 )
 
@@ -28,42 +27,22 @@ type LinkModel struct {
 }
 
 var random *rand.Rand
-var collection *mongo.Collection
-var letterRunes = []rune("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+
+var storage *client.StorageType
 
 const ShortUrlLength = 5
 
-var hostname string
-var mongoUri string
+var cfg *config.AppConfig
 
 func main() {
-	hostname = os.Getenv("HOSTNAME")
-	if len(strings.TrimSpace(hostname)) == 0 {
-		log.Fatal("HOSTNAME env is required")
-	}
-	mongoUri = os.Getenv("MONGODB_CONNECTION_URI")
-	if len(strings.TrimSpace(mongoUri)) == 0 {
-		log.Fatal("MONGODB_CONNECTION_URI env is required")
-	}
-
-	mongoDbName := os.Getenv("MONGODB_NAME")
-	if len(strings.TrimSpace(mongoDbName)) == 0 {
-		log.Fatal("MONGODB_NAME env is required")
-	}
-
-	mongoCollectionName := os.Getenv("MONGODB_COLLECTION")
-	if len(strings.TrimSpace(mongoCollectionName)) == 0 {
-		log.Fatal("MONGODB_COLLECTION env is required")
-	}
-
+	cfg = config.GetAppConfig()
 	random = rand.New(rand.NewSource(time.Now().UnixNano()))
-	db := mongoConnect()
-	collection = db.Database(mongoDbName).Collection(mongoCollectionName)
+	storage = client.CreateStorage(cfg, context.TODO())
 
 	router := gin.Default()
 	router.POST("/createShortUrl", postShortUrl)
 	router.GET("/:urlParam", getLongUrlByShort)
-	err := router.Run(":8080")
+	err := router.Run(":8181")
 	if err != nil {
 		return
 	}
@@ -72,7 +51,7 @@ func main() {
 func getLongUrlByShort(c *gin.Context) {
 	shortUrl := c.Param("urlParam")
 	var link LinkModel
-	err := collection.FindOne(c, bson.M{"shorturl": shortUrl}).Decode(&link)
+	err := client.FindOne(storage, bson.M{"shorturl": shortUrl}, &link)
 	if err != nil {
 		log.Print(err)
 		_ = c.AbortWithError(http.StatusNotFound, nil)
@@ -88,39 +67,14 @@ func postShortUrl(c *gin.Context) {
 		return
 	}
 
-	shortUrl := generateRandomString(ShortUrlLength)
+	shortUrl := utils.GenerateRandomString(ShortUrlLength, random)
 	//TODO: check unique shortUrl
 	data := LinkModel{Url: request.Url, ShortUrl: shortUrl}
-	_, err := collection.InsertOne(c, data)
+	err := client.Add(storage, data)
 	if err != nil {
 		log.Print(err)
 		c.AbortWithStatus(http.StatusInternalServerError)
 	}
-	resp := LinkResponse{ShortUrl: hostname + shortUrl}
+	resp := LinkResponse{ShortUrl: cfg.Hostname + shortUrl}
 	c.IndentedJSON(http.StatusCreated, resp)
-}
-
-func generateRandomString(length int) string {
-	b := make([]rune, length)
-	for i := range b {
-		b[i] = letterRunes[random.Intn(len(letterRunes))]
-	}
-	return string(b)
-}
-
-func mongoConnect() *mongo.Client {
-	clientOptions := options.Client().ApplyURI(mongoUri)
-	client, err := mongo.Connect(context.TODO(), clientOptions)
-
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// Check the connection
-	err = client.Ping(context.TODO(), nil)
-
-	if err != nil {
-		log.Fatal(err)
-	}
-	return client
 }
